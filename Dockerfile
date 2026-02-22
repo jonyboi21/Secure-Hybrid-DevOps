@@ -10,7 +10,7 @@ WORKDIR /app
 RUN adduser --disabled-password --gecos "" appuser
 
 # Install deps first for caching
-COPY app/requirements.txt /app/requirements.txt
+COPY App/requirements.txt /App/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app
