@@ -1,0 +1,10 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - jq
+
+runcmd:
+  - [ bash, -lc, "usermod -aG docker azureuser" ]
+  - [ bash, -lc, "systemctl enable docker && systemctl restart docker" ]
+  - [ bash, -lc, "curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin" ]
