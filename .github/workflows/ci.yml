@@ -31,10 +31,12 @@ jobs:
           pip install pytest ruff pip-audit
 
       - name: Lint (ruff)
-        run: ruff check App
+        working-directory: App
+        run: ruff check .
 
       - name: Unit tests
-        run: pytest -q App/tests
+        working-directory: App
+        run: pytest -q
 
       - name: Dependency vulnerability scan (pip-audit)
         run: pip-audit -r App/requirements.txt
