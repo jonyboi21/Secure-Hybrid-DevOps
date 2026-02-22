@@ -39,7 +39,8 @@ jobs:
         run: pytest -q
 
       - name: Dependency vulnerability scan (pip-audit)
-        run: pip-audit -r App/requirements.txt
+        working-directory: App
+        run: pip-audit -r requirements.txt
 
   build_scan_push:
     runs-on: ubuntu-latest
