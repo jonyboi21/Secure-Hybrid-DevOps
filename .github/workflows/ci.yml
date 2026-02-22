@@ -25,18 +25,41 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        working-directory: App
         run: |
           python -m pip install --upgrade pip
-          pip install -r App/requirements.txt
+          pip install -r requirements.txt
           pip install pytest ruff pip-audit
+
+      - name: Debug Python paths and files
+        run: |
+          pwd
+          ls -la
+          ls -la App
+          ls -la App/tests
+          echo "---- App/tests/test_health.py (first 30 lines) ----"
+          sed -n '1,30p' App/tests/test_health.py
+          echo "---- search for bad import (app.main) ----"
+          grep -R "from app\.main import app" -n . || true
+          echo "---- python sys.path ----"
+          python - <<'PY'
+import os, sys
+print("cwd:", os.getcwd())
+print("sys.path:")
+for p in sys.path:
+    print("  ", p)
+PY
 
       - name: Lint (ruff)
         working-directory: App
         run: ruff check .
 
-      - name: Unit tests
-        working-directory: App
-        run: pytest -q
+      - name: Unit tests (verbose)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/App
+        run: |
+          python -V
+          pytest -vv --maxfail=1 --full-trace --showlocals -s App/tests
 
       - name: Dependency vulnerability scan (pip-audit)
         working-directory: App
@@ -121,7 +144,6 @@ jobs:
       - name: Deploy manifests (patch image + tag)
         run: |
           kubectl apply -f k8s/namespace.yaml
-          # Replace image placeholders using sed (simple + interview-friendly)
           sed -e "s|REPLACE_ME_ACR_LOGIN_SERVER|${{ secrets.ACR_LOGIN_SERVER }}|g" \
               -e "s|REPLACE_ME_TAG|${{ github.sha }}|g" k8s/deployment.yaml | kubectl apply -f -
           kubectl apply -f k8s/service.yaml
