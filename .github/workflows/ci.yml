@@ -70,30 +70,51 @@ jobs:
           {
             echo "## CI"
             echo ""
-            echo "- Tests/Lint: completed in prior job"
             echo "- Image built: \`${{ env.IMAGE_NAME }}:${{ github.sha }}\`"
             echo "- Trivy: **HIGH/CRITICAL blocked**"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # --- Azure steps are "bypassed" unless Azure secrets exist ---
   build_push_acr:
     runs-on: ubuntu-latest
     needs: [build_scan]
-    if: >
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      secrets.AZURE_CLIENT_ID != '' &&
-      secrets.AZURE_TENANT_ID != '' &&
-      secrets.AZURE_SUBSCRIPTION_ID != '' &&
-      secrets.ACR_NAME != '' &&
-      secrets.ACR_LOGIN_SERVER != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v4
 
+      # Determine whether Azure secrets are present; set outputs
+      - name: Check Azure secrets present
+        id: azcheck
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          missing=0
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID ACR_NAME ACR_LOGIN_SERVER; do
+            if [ -z "${!v}" ]; then
+              echo "Missing secret: $v"
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip Azure (no secrets configured)
+        if: steps.azcheck.outputs.enabled != 'true'
+        run: |
+          echo "Azure credentials/secrets not configured. Skipping ACR push."
+          exit 0
+
       - name: Azure login (OIDC)
+        if: steps.azcheck.outputs.enabled == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -101,17 +122,21 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: ACR login
+        if: steps.azcheck.outputs.enabled == 'true'
         run: az acr login --name ${{ secrets.ACR_NAME }}
 
       - name: Set up Docker Buildx
+        if: steps.azcheck.outputs.enabled == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push image to ACR
+        if: steps.azcheck.outputs.enabled == 'true'
         run: |
           docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Job summary (ACR push)
+        if: steps.azcheck.outputs.enabled == 'true'
         run: |
           {
             echo "## ACR Push"
@@ -122,22 +147,44 @@ jobs:
   deploy_aks:
     runs-on: ubuntu-latest
     needs: [build_push_acr]
-    if: >
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      secrets.AZURE_CLIENT_ID != '' &&
-      secrets.AZURE_TENANT_ID != '' &&
-      secrets.AZURE_SUBSCRIPTION_ID != '' &&
-      secrets.AKS_RESOURCE_GROUP != '' &&
-      secrets.AKS_NAME != '' &&
-      secrets.ACR_LOGIN_SERVER != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Azure secrets present
+        id: azcheck
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
+          AKS_NAME: ${{ secrets.AKS_NAME }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          missing=0
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AKS_RESOURCE_GROUP AKS_NAME ACR_LOGIN_SERVER; do
+            if [ -z "${!v}" ]; then
+              echo "Missing secret: $v"
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip Azure (no secrets configured)
+        if: steps.azcheck.outputs.enabled != 'true'
+        run: |
+          echo "Azure credentials/secrets not configured. Skipping AKS deploy."
+          exit 0
+
       - name: Azure login (OIDC)
+        if: steps.azcheck.outputs.enabled == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -145,15 +192,18 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set AKS context
+        if: steps.azcheck.outputs.enabled == 'true'
         uses: azure/aks-set-context@v4
         with:
           resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ secrets.AKS_NAME }}
 
       - name: Install kubectl
+        if: steps.azcheck.outputs.enabled == 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Deploy manifests (patch image + tag)
+        if: steps.azcheck.outputs.enabled == 'true'
         run: |
           kubectl apply -f k8s/namespace.yaml
           sed -e "s|REPLACE_ME_ACR_LOGIN_SERVER|${{ secrets.ACR_LOGIN_SERVER }}|g" \
@@ -162,9 +212,11 @@ jobs:
           kubectl apply -f k8s/ingress.yaml
 
       - name: Wait for rollout
+        if: steps.azcheck.outputs.enabled == 'true'
         run: kubectl -n secure-hybrid rollout status deploy/api --timeout=180s
 
       - name: Deploy summary
+        if: steps.azcheck.outputs.enabled == 'true'
         run: |
           {
             echo "## Deploy"
